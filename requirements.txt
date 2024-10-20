@@ -6,3 +6,5 @@ markdown2
 openai
 python-dotenv
 numpy
+waitress
+requests>=2.0.0

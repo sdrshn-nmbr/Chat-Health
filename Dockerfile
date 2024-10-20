@@ -7,6 +7,8 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
+    libopenblas-dev \
+    libomp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file
@@ -25,4 +27,4 @@ EXPOSE 8080
 ENV PORT 8080
 
 # Command to run the app with Waitress
-CMD ["waitress-serve", "--port=$PORT", "app:app"]
+CMD ["sh", "-c", "waitress-serve --port=${PORT} app:app"]
