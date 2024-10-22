@@ -1,17 +1,12 @@
-import os
-import time
 import pandas as pd
-from flask import Flask, render_template, request
-import requests
-import json
-import re
-import faiss
-import logging
-import markdown2
-import openai
-from dotenv import load_dotenv
-import pickle
 import numpy as np
+from flask import Flask, render_template, request
+from dotenv import load_dotenv
+import os, time, requests, json, re, faiss, logging, markdown2, openai, pickle
+
+from google.generativeai import GenerativeModel
+import google.generativeai as genai
+
 
 load_dotenv()
 
@@ -25,8 +20,10 @@ logger = logging.getLogger(__name__)
 OLLAMA_API_BASE = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 EMBEDDING_MODEL = "text-embedding-ada-002"
 
+genai.configure(api_key=GEMINI_API_KEY)
 client = openai.OpenAI()
 
 
@@ -127,9 +124,10 @@ class DataManager:
 
             start_time = time.time()
             logger.info("Starting FAISS search")
-            distances, indices = self.faiss_index.search(
-                query_embedding, num_examples
-            )  # !
+
+            # !
+            distances, indices = self.faiss_index.search(query_embedding, num_examples)
+
             logger.info(
                 f"Finished FAISS search in {time.time() - start_time:.5f} seconds"
             )
@@ -168,6 +166,7 @@ class LLMManager:
         self.api_base = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
         self.model = os.environ.get("OLLAMA_MODEL", "gemma2:2b")
         self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        self.gemini_model = GenerativeModel("gemini-1.5-flash")
 
     def check_ollama_status(self):
         try:
@@ -177,7 +176,21 @@ class LLMManager:
         except requests.RequestException as e:
             return False, f"Error connecting to Ollama server: {str(e)}"
 
-    def generate_response(self, prompt):
+    def generate_response_gemini(self, prompt):  # * Fastest model
+        try:
+            start_time = time.time()
+            logger.info("Starting chat completion with Gemini Pro")
+            response = self.gemini_model.generate_content(prompt)
+            logger.info(
+                f"Finished chat completion with Gemini Pro in {time.time() - start_time:.2f} seconds"
+            )
+
+            return response.text
+        except Exception as e:
+            logger.error(f"Error generating response from Gemini Pro: {str(e)}")
+            return self.generate_response_ollama(prompt)  # ! only available locally
+
+    def generate_response_gpt(self, prompt):
         try:
             start_time = time.time()
             logger.info("Starting chat completion with OpenAI")
@@ -199,7 +212,7 @@ class LLMManager:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error generating response from OpenAI: {str(e)}")
-            return self.generate_response_ollama(prompt)  # Fallback to Ollama
+            return self.generate_response_ollama(prompt)  # ! only available locally
 
     def generate_response_ollama(self, prompt):
         url = f"{OLLAMA_API_BASE}/api/generate"
@@ -231,7 +244,7 @@ class ResponseGenerator:
     def generate_guidance(self, user_input):
         similar_cases = self.data_manager.find_similar_cases(user_input)
         prompt = self._create_prompt(user_input, similar_cases)
-        llm_response = self.llm_manager.generate_response(prompt)
+        llm_response = self.llm_manager.generate_response_gemini(prompt)
         return {"suggestion": llm_response, "similar_cases": similar_cases}
 
     @staticmethod
@@ -318,3 +331,10 @@ def handle_error(error):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+
+# ! keep alive cmd
+# nohup bash -c 'while true; do hey -n 1 -c 1 https://legacy.fly.dev/; sleep 120; done' &
+
+# ! to stop
+# ps aux | grep 'hey'
+# kill <PID>   # Replace <PID> with the process ID from the above command.

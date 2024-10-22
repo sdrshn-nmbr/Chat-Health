@@ -8,3 +8,5 @@ python-dotenv
 numpy
 waitress
 requests>=2.0.0
+gunicorn
+google-generativeai

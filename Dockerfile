@@ -1,30 +1,26 @@
-# Use an official lightweight Python image
 FROM python:3.9-slim
 
-# Set the working directory
+# set working directory
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     libopenblas-dev \
     libomp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file
 COPY requirements.txt .
 
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
+# copy rest of app code
 COPY . .
 
-# Expose the port (Fly.io uses PORT environment variable)
+# expose the port (fly.io uses PORT env vars)
 EXPOSE 8080
 
-# Set the PORT environment variable
+# set the PORT env var
 ENV PORT 8080
 
-# Command to run the app with Waitress
-CMD ["sh", "-c", "waitress-serve --port=${PORT} app:app"]
+# command to run app with gunicorn (wsgi server)
+CMD ["sh", "-c", "gunicorn app:app --workers=2 --threads=4 --bind=0.0.0.0:${PORT}"]
