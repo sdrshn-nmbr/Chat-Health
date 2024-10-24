@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 from flask import Flask, render_template, request
 from dotenv import load_dotenv
-import os, time, requests, json, re, faiss, logging, markdown2, openai, pickle
+import os, time, requests, json, re, logging, pickle
+import faiss, markdown2, openai, anthropic
 
 from google.generativeai import GenerativeModel
 import google.generativeai as genai
@@ -21,10 +22,12 @@ OLLAMA_API_BASE = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 EMBEDDING_MODEL = "text-embedding-ada-002"
 
 genai.configure(api_key=GEMINI_API_KEY)
 client = openai.OpenAI()
+# ant_client = anthropic.Anthropic()
 
 
 class DataManager:
@@ -115,6 +118,7 @@ class DataManager:
             response = client.embeddings.create(
                 input=self.clean_text(query), model="text-embedding-ada-002"
             )
+
             logger.info(
                 f"Finished user query embedding in {time.time() - start_time:.2f} seconds"
             )
@@ -176,6 +180,25 @@ class LLMManager:
         except requests.RequestException as e:
             return False, f"Error connecting to Ollama server: {str(e)}"
 
+    # def generate_response_ant(self, prompt):
+    #     try:
+    #         start_time = time.time()
+    #         logger.info("Starting chat completion with Anthropic")
+    #         message = ant_client.messages.create(
+    #             model="claude-3-haiku-20240307",
+    #             max_tokens=1024,
+    #             messages=[{"role": "user", "content": prompt}],
+    #         )
+    #         logger.info(
+    #             f"Finished chat completion with Anthropic in {time.time() - start_time:.2f} seconds"
+    #         )
+
+    #         logger.log(f"Content:\n\n\n{message.content}")
+    #         return message.content
+    #     except Exception as e:
+    #         logger.error(f"Error generating response from Anthropic: {str(e)}")
+    #         return self.generate_response_gemini(prompt)
+
     def generate_response_gemini(self, prompt):  # * Fastest model
         try:
             start_time = time.time()
@@ -188,7 +211,7 @@ class LLMManager:
             return response.text
         except Exception as e:
             logger.error(f"Error generating response from Gemini Pro: {str(e)}")
-            return self.generate_response_ollama(prompt)  # ! only available locally
+            return self.generate_response_gpt(prompt)
 
     def generate_response_gpt(self, prompt):
         try:
@@ -248,28 +271,76 @@ class ResponseGenerator:
         return {"suggestion": llm_response, "similar_cases": similar_cases}
 
     @staticmethod
-    def _create_prompt(user_input, similar_cases):
+    def _create_prompt(user_input, similar_cases=None, similarity_threshold=15):
         prompt = (
-            "You are an experienced mental health counseling advisor. "
-            "Based on the following similar cases and the current situation, "
-            "provide professional guidance for the counselor.\n\n"
+            "You are an expert mental health counseling advisor providing AI-powered "
+            "suggestions for counseling approaches. Your guidance should be professional, "
+            "evidence-based, and formatted for clear web display using HTML markup when needed.\n\n"
+            "Core Competencies:\n"
+            "- Clinical assessment and intervention planning\n"
+            "- Evidence-based therapeutic approaches\n"
+            "- Risk assessment and crisis management\n"
+            "- Cultural competency and ethical practice\n"
+            "- Clear communication and practical guidance\n\n"
         )
 
-        for case in similar_cases:
-            prompt += f"Previous Case:\nSituation: {case['context']}\n"
-            prompt += f"Response: {case['response']}\n\n"
+        if similar_cases:
+            relevant_cases = [case for case in similar_cases if (case['similarity'] * 100) > similarity_threshold]
+            
+            if relevant_cases:
+                prompt += (
+                    "Reference Cases Analysis:\n"
+                    "The following similar cases have been identified, with similarity "
+                    "scores indicating their relevance to the current situation:\n\n"
+                )
+                
+                for case in relevant_cases:
+                    prompt += (
+                        f"Similar Case (Similarity: {case['similarity']*100:.1f}%):\n"
+                        f"Situation: {case['context']}\n"
+                        f"Response: {case['response']}\n\n"
+                    )
 
-        prompt += f"Current Situation:\n{user_input}\n\n"
+
         prompt += (
-            "Please provide a detailed, empathetic response that includes:\n"
-            "1. Initial assessment of the situation\n"
-            "2. Suggested therapeutic approach\n"
-            "3. Specific intervention strategies\n"
-            "4. Important considerations and potential challenges\n"
+            "Current Case Details:\n"
+            "==========================================\n"
+            f"{user_input}\n"
+            "==========================================\n\n"
         )
 
         prompt += (
-            "Add extra new lines where possible for best spacing and readability\n"
+            "Provide a comprehensive analysis and recommendations covering:\n\n"
+            "1. Initial Assessment\n"
+            "   - Key risk factors and immediate concerns\n"
+            "   - Severity of presenting symptoms\n"
+            "   - Relevant contextual factors\n"
+            "   - Preliminary diagnostic considerations\n\n"
+            "2. Recommended Therapeutic Approach\n"
+            "   - Primary therapeutic framework with clear rationale\n"
+            "   - Specific therapeutic goals\n"
+            "   - Alternative approaches to consider\n"
+            "   - Expected treatment timeline\n\n"
+            "3. Intervention Strategies\n"
+            "   - Specific techniques and interventions\n"
+            "   - Session structure recommendations\n"
+            "   - Essential resources and tools\n"
+            "   - Crisis protocols if needed\n\n"
+            "4. Important Considerations\n"
+            "   - Cultural and contextual factors\n"
+            "   - Anticipated challenges and mitigation strategies\n"
+            "   - Ethical considerations\n"
+            "   - Progress monitoring approach\n\n"
+        )
+
+        prompt += (
+            "Guidelines for your response:\n"
+            "1. Be concise but thorough\n"
+            "2. Use clear, professional language\n"
+            "3. Prioritize evidence-based approaches\n"
+            "4. Include specific, actionable recommendations\n"
+            "5. Address both immediate needs and long-term treatment planning\n"
+            "6. Consider cultural and contextual factors throughout\n"
         )
 
         return prompt
@@ -337,4 +408,4 @@ if __name__ == "__main__":
 
 # ! to stop
 # ps aux | grep 'hey'
-# kill <PID>   # Replace <PID> with the process ID from the above command.
+# kill <PID>   # replace <PID> with the process ID from the above command
